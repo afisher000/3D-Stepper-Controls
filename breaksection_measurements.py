@@ -8,18 +8,20 @@ import serial
 import time
 import pandas as pd
 import pickle
-import matplotlib
+import matplotlib.pyplot as plt
 import os
+import numpy as np
 
 
 # TO IMPLEMENT:
     # Choose coordinate system and choose signs in code accordingly
-    
+    # There is slack in motors
+    # Better error handing with field measurements
     
 class Controller():
     def __init__(self, ard_port, gauss_port,
                  ard_baudrate=9600, gauss_baudrate=2400,
-                 ard_timeout=5, gauss_timeout=2):
+                 ard_timeout=10, gauss_timeout=2):
         '''Initialize connections to arduino and gaussmeter over serial. 
         Save measurements in DataFrame. '''
         self.arduino = serial.Serial(port = ard_port, baudrate=ard_baudrate,
@@ -34,7 +36,7 @@ class Controller():
         self.motor_calibration = (1600, 1280, 640)
         
         # Create measurements table, read in curstep
-        self.measurements= pd.DataFrame(columns=['x','y','z','field'])
+        self.reset_data()
         self.curpos = [0,0,0]
         if 'saved_pos.pkl' in os.listdir():
             self.curpos = pickle.load(open('saved_pos.pkl','rb'))
@@ -44,16 +46,26 @@ class Controller():
         self.get_measurement() # get measurement at first position
         return
     
+    def reset_data(self):
+        self.measurements= pd.DataFrame(columns=['x','y','z','field'])
+
+
     def get_measurement(self):
         ''' Read from 6010 FWBELL gaussmeter. Return measurement as tuple of
         z_step and field.'''
-        print('Writing for measurement')
-        num_bytes = self.gauss.write(b':measure:flux?\n')
-        message = self.gauss.read(num_bytes)
-        field_reading = message.decode().strip('T;\n')
-        print(field_reading)
-        if field_reading=='':
-            raise ValueError('Gaussmeter did not return measurement')
+
+        field_reading = ''
+        counter = 0
+        while(field_reading==''):
+            self.gauss.readline() #Emtpy buffer
+            self.gauss.write(b':measure:flux?\n')
+            message = self.gauss.readline()
+            field_reading = message.decode().strip('T;\n')
+            print(f'Field={field_reading} T')
+            counter +=1
+            if counter==5:
+                raise ValueError('Gaussmeter did not return measurement')
+        
         data = [*self.curpos, float(field_reading)]
         self.measurements.loc[len(self.measurements)] = data
         return
@@ -73,25 +85,46 @@ class Controller():
         
         # Wait for stepper message
         message = self.arduino.read_until()
-        #if message.decode() != 'success\n':
-        #    print(message.decode())
-        #    raise ValueError
+        if message.decode() != 'success\n':
+           print(message.decode())
+           raise ValueError
         
         # Update curpos and take measurement
+        time.sleep(0.5)
         self.curpos[motor] += steps/self.motor_calibration[motor]
-        self.get_measurement()
+        if take_data:
+            self.get_measurement()
         return
         
-    def gradient_scan(motorval=0, npoints=10, max_offset=2):
-        conn.move(-max_offset, motor=motorval)
+    def gradient_scan(self, motor=0, npoints=10, max_offset=1):
+        self.reset_data()
+        slop = 0.5
+        conn.move(-max_offset-slop, motor=motor, take_data=False)
+        conn.move(slop, motor=motor)
         for _ in range(npoints-1):
-            conn.move(2*max_offset/(npoints-1), motor=motorval)
-        conn.move(-max_offset, motor=motorval)
+            conn.move(2*max_offset/(npoints-1), motor=motor)
+        conn.move(-max_offset-slop, motor=motor, take_data=False)
+        conn.move(slop, motor=motor)
 
+        # Compute fit
+        df = self.measurements
+        polyfit = np.polyfit(df.x, df.field, 1)
+        df['linearfit'] = np.polyval(polyfit, df.x)
+        gradient = polyfit[0]*1000
 
-    def __enter__(self):
-        return self
+        # Plot
+        fig, ax = plt.subplots()
+        coord = df.columns[motor]
+        df.sort_values(by=coord)
+        df.plot.scatter(x=coord, y='field', label='Data', ax=ax)
+        df.plot(x=coord, y='linearfit', label=f'Fit: {gradient:.1f} T/m', ax=ax)
     
+    def long_scan(self):
+        self.reset_data()
+        [self.move(2, motor=2) for _ in range(20)]
+        [self.move(2, motor=2, take_data=False) for _ in range(35)]
+        [self.move(2, motor=2) for _ in range(20)]
+
     def __exit__(self, *args):
         ''' Close connections on exit of with statement. Save curstep to 
         pickle file.'''
@@ -101,22 +134,15 @@ class Controller():
         pickle.dump(self.curpos, open('saved_step.pkl','wb'))
         return
 
-#if "__init__"=="__main__":
+    def close(self):
+        self.__exit__()
     
+conn = Controller(ard_port='COM4', gauss_port='COM6')
 
-# Enter correct COM ports for the stepper arduino and gauss meter.
-with Controller(ard_port='COM4', gauss_port='COM6') as conn:
-    # Move the motor once
-    #conn.move(-1, motor=1)
+#conn.gradient_scan(motor=0, npoints=10, max_offset=1)
 
-    # Perform gradient scan
-    conn.gradient_scan(motor=0)
-        
-    # Use a loop to take a series of measurements
-    # [conn.move(-1, motor=2) for _ in range(10)] 
 
-    # Save conn.measurements before end of with to keep in workspace
-    measurements = conn.measurements 
+
 
 
 # conn = Controller(ard_port='COM4', gauss_port='COM6')
