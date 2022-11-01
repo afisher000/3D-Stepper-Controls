@@ -21,7 +21,7 @@ import numpy as np
 class Controller():
     def __init__(self, ard_port, gauss_port,
                  ard_baudrate=9600, gauss_baudrate=2400,
-                 ard_timeout=10, gauss_timeout=2):
+                 ard_timeout=10, gauss_timeout=1):
         '''Initialize connections to arduino and gaussmeter over serial. 
         Save measurements in DataFrame. '''
         self.arduino = serial.Serial(port = ard_port, baudrate=ard_baudrate,
@@ -43,35 +43,46 @@ class Controller():
 
             
         time.sleep(2) #Wait for connections to be made
-        self.get_measurement() # get measurement at first position
+        self.get_measurement() # get initial measurement
         return
     
     def reset_data(self):
+        # Reset measurements dataframe
         self.measurements= pd.DataFrame(columns=['x','y','z','field'])
 
 
     def get_measurement(self):
         ''' Read from 6010 FWBELL gaussmeter. Return measurement as tuple of
-        z_step and field.'''
+        z_step and field. While loop ensures that measurements is tried until sucessful'''
 
-        field_reading = ''
-        counter = 0
-        while(field_reading==''):
-            self.gauss.readline() #Emtpy buffer
+
+        while True:
+            # print('take measurement') #for troubleshooting
             self.gauss.write(b':measure:flux?\n')
-            message = self.gauss.readline()
-            field_reading = message.decode().strip('T;\n')
-            print(f'Field={field_reading} T')
-            counter +=1
-            if counter==5:
-                raise ValueError('Gaussmeter did not return measurement')
+            message = self.gauss.read_until()
+            if message:
+                break
         
+        field_reading = message.decode().split('T;\n')[0]
+        print(f'Field={field_reading} T')
+
         data = [*self.curpos, float(field_reading)]
         self.measurements.loc[len(self.measurements)] = data
         return
 
         
     def move(self, dist, take_data=True, motor=2, safety=True):
+        '''To elimate slop measurement errors, always approach desired location from the 
+        negative direction.'''
+        
+        slop = 0.5
+        if dist>=0:
+            self.raw_move(dist, take_data=take_data, motor=motor, safety=safety)
+        else:
+            self.raw_move(dist-slop, take_data=False, motor=motor, safety=safety)
+            self.raw_move(slop, take_data=take_data, motor=motor, safety=safety)
+
+    def raw_move(self, dist, take_data=True, motor=2, safety=True):
         ''' Moves select motor a distance "dist" and waits for success message 
         to continue. Default is to take a measurement after a move. '''
         # Safety measure
@@ -96,25 +107,26 @@ class Controller():
             self.get_measurement()
         return
         
-    def gradient_scan(self, motor=0, npoints=10, max_offset=1):
+    def gradient_scan(self, motor, npoints=10, max_offset=1):
+        # Take gradient measurement of npoints for a range of max_offset*[-1,1]. 
+        if motor==2:
+            print('Invalid use of z-motor for gradient scan')
+
         self.reset_data()
-        slop = 0.5
-        conn.move(-max_offset-slop, motor=motor, take_data=False)
-        conn.move(slop, motor=motor)
+        conn.move(-max_offset, motor=motor)
         for _ in range(npoints-1):
             conn.move(2*max_offset/(npoints-1), motor=motor)
-        conn.move(-max_offset-slop, motor=motor, take_data=False)
-        conn.move(slop, motor=motor)
+        conn.move(-max_offset, motor=motor)
 
         # Compute fit
         df = self.measurements
-        polyfit = np.polyfit(df.x, df.field, 1)
-        df['linearfit'] = np.polyval(polyfit, df.x)
+        coord = df.columns[motor]
+        polyfit = np.polyfit(df[coord], df.field, 1)
+        df['linearfit'] = np.polyval(polyfit, df[coord])
         gradient = polyfit[0]*1000
 
         # Plot
         fig, ax = plt.subplots()
-        coord = df.columns[motor]
         df.sort_values(by=coord)
         df.plot.scatter(x=coord, y='field', label='Data', ax=ax)
         df.plot(x=coord, y='linearfit', label=f'Fit: {gradient:.1f} T/m', ax=ax)
@@ -138,9 +150,6 @@ class Controller():
         self.__exit__()
     
 conn = Controller(ard_port='COM4', gauss_port='COM6')
-
-#conn.gradient_scan(motor=0, npoints=10, max_offset=1)
-
 
 
 
