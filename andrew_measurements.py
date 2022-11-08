@@ -12,14 +12,13 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 import seaborn as sns
-from datetime import datetime
 
 
 # TO IMPLEMENT:
 # move to axis
     
 class Controller():
-    def __init__(self, ard_port='COM4', gauss_port='COM6',
+    def __init__(self, ard_port, gauss_port,
                  ard_baudrate=9600, gauss_baudrate=2400,
                  ard_timeout=15, gauss_timeout=1):
         '''Initialize connections to arduino and gaussmeter over serial. 
@@ -55,6 +54,7 @@ class Controller():
         ''' Read from 6010 FWBELL gaussmeter. Return measurement as tuple of
         z_step and field. While loop ensures that measurements is tried until sucessful'''
 
+
         while True:
             # print('take measurement') #for troubleshooting
             self.gauss.write(b':measure:flux?\n')
@@ -62,7 +62,7 @@ class Controller():
             if message:
                 break
         
-        field_reading = message.decode().split('T')[0]
+        field_reading = message.decode().split('T;\n')[0]
         print(f'Current Position: {self.curpos}')
         print(f'Field: {field_reading} T')
 
@@ -71,44 +71,28 @@ class Controller():
         return
 
         
-    def move(self, dist, take_data=True, motor=2):
+    def move(self, dist, take_data=True, motor=2, safety=True):
         '''To elimate slop measurement errors, always approach desired location from the 
         negative direction and only take measurement when at desired location. Positive direction
         is movement away from motor.'''
         
         slop = 0.5
-        max_move = 4
-        if abs(dist)<=5: # Short moves
-            if dist>=0:
-                self.raw_move(dist, take_data=take_data, motor=motor)
-            else:
-                self.raw_move(dist-slop, take_data=False, motor=motor)
-                self.raw_move(slop, take_data=take_data, motor=motor)
-        elif motor!=2:
-            print('Cannot move motors x,y move than 5mm!')
-        else: # Long moves
-            if dist>=0:
-                n_moves = np.ceil((dist)/max_move).astype('int')
-                for _ in range(n_moves):
-                    self.raw_move((dist)/n_moves, take_data=False, motor=motor)
-                if take_data:
-                    self.get_measurement()
-            else:
-                n_moves = np.ceil(abs(dist-slop)/max_move).astype('int')
-                print(n_moves)
-                print((dist-slop)/n_moves)
-                for _ in range(n_moves):
-                    self.raw_move((dist-slop)/n_moves, take_data=False, motor=motor)
-                self.raw_move(slop, take_data=take_data, motor=motor) 
+        if dist>=0:
+            self.raw_move(dist, take_data=take_data, motor=motor, safety=safety)
+        else:
+            self.raw_move(dist-slop, take_data=False, motor=motor, safety=safety)
+            self.raw_move(slop, take_data=take_data, motor=motor, safety=safety)
 
-
-    def raw_move(self, dist, take_data=True, motor=2):
+    def raw_move(self, dist, take_data=True, motor=2, safety=True):
         ''' Moves select motor a distance "dist" and waits for success message 
         to continue. Default is to take a measurement after a move. '''
-
+        # Safety measure
+        if safety and abs(dist)>5:
+            print('Trying to move motor >5mm. If sure you want to proceed, add argument safety=False')
+        
         # Move motor correct steps
         steps = round(dist*self.motor_calibration[motor])
-        print(f'Writing to move: motor={motor}, steps={steps}, (dist={dist:.2f})')
+        print(f'Writing to move: motor={motor}, steps={steps}, (dist={dist})')
         self.arduino.write(b'%i, %i' % (motor, steps))
         
         # Wait for stepper message
@@ -124,14 +108,14 @@ class Controller():
             self.get_measurement()
         return
         
-    def scan_3D(self, reset=True, save=True,
-        x_npoints=5, x_max_offset=0.75, 
-        y_npoints=5, y_max_offset=0.75,
-        z_npoints=61, z_max_offset=30
+    def scan_3D(self, reset=False, save=False,
+        x_npoints=3, x_max_offset=1, 
+        y_npoints=3, y_max_offset=1,
+        z_npoints=3, z_max_offset=10
     ):
         ''' Perform a three dimensional scan with the specified resolution.'''
         if reset:
-            self.reset_data()
+            self.reset_data
 
         self.move(-z_max_offset, motor=2, take_data=False)
         for _ in range(z_npoints-1):
@@ -144,9 +128,7 @@ class Controller():
             y_npoints=y_npoints, y_max_offset=y_max_offset
         )
         self.move(-z_max_offset, motor=2, take_data=False)
-        
-        timestamp = datetime.today().strftime('%H:%M')
-        print(f'2D Completed at {timestamp}')
+
         if save:
             self.measurements.to_csv('scan_3D data.csv', index=False)
 
@@ -165,8 +147,6 @@ class Controller():
         self.scan_1D(motor=1, npoints=y_npoints, max_offset=y_max_offset)
         self.move(-x_max_offset, motor=0, take_data=False)
 
-        timestamp = datetime.today().strftime('%H:%M')
-        print(f'2D Completed at {timestamp}')
         if save:
             self.measurements.to_csv('scan_2D data.csv', index=False)
 
@@ -180,7 +160,6 @@ class Controller():
             self.move(2*max_offset/(npoints-1), motor=motor)
         self.move(-max_offset, motor=motor, take_data=False)
 
-        print('1D Completed')
         if save:
             self.measurements.to_csv('scan_1D data.csv', index=False)
 
@@ -210,7 +189,7 @@ class Controller():
         self.arduino.close()
         self.gauss.close()
         self.measurements.to_csv('temp_data.csv', index=False)
-        pickle.dump(self.curpos, open('saved_pos.pkl','wb'))
+        pickle.dump(self.curpos, open('saved_step.pkl','wb'))
         return
 
     def close(self):
