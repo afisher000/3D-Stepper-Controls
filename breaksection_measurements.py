@@ -24,10 +24,13 @@ class Controller():
                  ard_timeout=15, gauss_timeout=1):
         '''Initialize connections to arduino and gaussmeter over serial. 
         Save measurements in DataFrame. '''
+        self.gauss_port = gauss_port
+        self.gauss_baudrate = gauss_baudrate
+        self.gauss_timeout = gauss_timeout
         self.arduino = serial.Serial(port = ard_port, baudrate=ard_baudrate,
                                      timeout=ard_timeout)
-        self.gauss = serial.Serial(port = gauss_port, baudrate=gauss_baudrate,
-                                   timeout=gauss_timeout)
+        self.gauss = serial.Serial(port = gauss_port, baudrate=self.gauss_baudrate,
+                                   timeout=self.gauss_timeout)
 
         # Motor calibrations (arduino steps per mm)
         # Additional info: 1 arduino step is 1/16 of motor step. All motors are 
@@ -55,16 +58,22 @@ class Controller():
         ''' Read from 6010 FWBELL gaussmeter. Return measurement as tuple of
         z_step and field. While loop ensures that measurements is tried until sucessful'''
 
-        while True:
-            # print('take measurement') #for troubleshooting
-            self.gauss.write(b':measure:flux?\n')
-            message = self.gauss.read_until()
-            if message:
-                break
+        try:
+            while True:
+                # print('take measurement') #for troubleshooting
+                self.gauss.write(b':measure:flux?\n')
+                message = self.gauss.read_until()
+                if message:
+                    break
+        except:
+            # Error in writing or reading to gaussmeter. Disconnect and reconnect
+            self.gauss.__exit__()
+            time.sleep(1)
+            self.gauss = serial.Serial(port = self.gauss_port, baudrate=self.gauss_baudrate,
+                                    timeout=self.gauss_timeout)
         
         field_reading = message.decode().split('T')[0]
-        print(f'Current Position: {self.curpos}')
-        print(f'Field: {field_reading} T')
+        print(f'Field: {field_reading} T at {self.curpos}')
 
         data = [*self.curpos, float(field_reading)]
         self.measurements.loc[len(self.measurements)] = data
@@ -95,8 +104,6 @@ class Controller():
                     self.get_measurement()
             else:
                 n_moves = np.ceil(abs(dist-slop)/max_move).astype('int')
-                print(n_moves)
-                print((dist-slop)/n_moves)
                 for _ in range(n_moves):
                     self.raw_move((dist-slop)/n_moves, take_data=False, motor=motor)
                 self.raw_move(slop, take_data=take_data, motor=motor) 
@@ -108,7 +115,7 @@ class Controller():
 
         # Move motor correct steps
         steps = round(dist*self.motor_calibration[motor])
-        print(f'Writing to move: motor={motor}, steps={steps}, (dist={dist:.2f})')
+        #print(f'Writing to move: motor={motor}, steps={steps}, (dist={dist:.2f})') # for troubleshooting
         self.arduino.write(b'%i, %i' % (motor, steps))
         
         # Wait for stepper message
@@ -125,25 +132,19 @@ class Controller():
         return
         
     def scan_3D(self, reset=True, save=True,
-        x_npoints=5, x_max_offset=0.75, 
-        y_npoints=5, y_max_offset=0.75,
-        z_npoints=61, z_max_offset=30
+        x_npoints=3, x_max_offset=0.25, 
+        y_npoints=3, y_max_offset=0.25,
+        z_range=np.linspace(0,2,3)
     ):
         ''' Perform a three dimensional scan with the specified resolution.'''
         if reset:
             self.reset_data()
 
-        self.move(-z_max_offset, motor=2, take_data=False)
-        for _ in range(z_npoints-1):
+        for z in z_range:
+            self.move(z-self.curpos[2], motor=2, take_data=False)
             self.scan_2D(x_npoints=x_npoints, x_max_offset=x_max_offset, 
                 y_npoints=y_npoints, y_max_offset=y_max_offset
             )
-            self.move(2*z_max_offset/(z_npoints-1), motor=2, take_data=False)
-
-        self.scan_2D(x_npoints=x_npoints, x_max_offset=x_max_offset, 
-            y_npoints=y_npoints, y_max_offset=y_max_offset
-        )
-        self.move(-z_max_offset, motor=2, take_data=False)
         
         timestamp = datetime.today().strftime('%H:%M')
         print(f'2D Completed at {timestamp}')
