@@ -16,7 +16,8 @@ from datetime import datetime
 
 
 # TO IMPLEMENT:
-# move to axis
+# move to axis function
+# Format curpos printing to .2f
     
 class Controller():
     def __init__(self, ard_port='COM4', gauss_port='COM6',
@@ -73,7 +74,7 @@ class Controller():
                                     timeout=self.gauss_timeout)
         
         field_reading = message.decode().split('T')[0]
-        print(f'Field: {field_reading} T at {self.curpos}')
+        print(f'Field: {field_reading} T at {[round(x,2) for x in self.curpos]}')
 
         data = [*self.curpos, float(field_reading)]
         self.measurements.loc[len(self.measurements)] = data
@@ -132,9 +133,9 @@ class Controller():
         return
         
     def scan_3D(self, reset=True, save=True,
-        x_npoints=3, x_max_offset=0.25, 
-        y_npoints=3, y_max_offset=0.25,
-        z_range=np.linspace(0,2,3)
+        x_npoints=5, x_max_offset=0.75, 
+        y_npoints=5, y_max_offset=0.75,
+        z_range=np.linspace(-30,30,41)
     ):
         ''' Perform a three dimensional scan with the specified resolution.'''
         if reset:
@@ -143,7 +144,8 @@ class Controller():
         for z in z_range:
             self.move(z-self.curpos[2], motor=2, take_data=False)
             self.scan_2D(x_npoints=x_npoints, x_max_offset=x_max_offset, 
-                y_npoints=y_npoints, y_max_offset=y_max_offset
+                y_npoints=y_npoints, y_max_offset=y_max_offset,
+                reset=False, save=False
             )
         
         timestamp = datetime.today().strftime('%H:%M')
@@ -151,9 +153,9 @@ class Controller():
         if save:
             self.measurements.to_csv('scan_3D data.csv', index=False)
 
-    def scan_2D(self, reset=False, save=True,
-        x_npoints=3, x_max_offset=1, 
-        y_npoints=3, y_max_offset=1
+    def scan_2D(self, reset=True, save=True,
+        x_npoints=21, x_max_offset=0.75, 
+        y_npoints=21, y_max_offset=0.75
     ):
         ''' Scan the transverse plane with the specified resolution.'''
         if reset:
