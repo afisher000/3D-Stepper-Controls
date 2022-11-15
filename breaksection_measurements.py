@@ -149,7 +149,7 @@ class Controller():
             )
         
         timestamp = datetime.today().strftime('%H:%M')
-        print(f'2D Completed at {timestamp}')
+        print(f'3D Completed at {timestamp}')
         if save:
             self.measurements.to_csv('scan_3D data.csv', index=False)
 
@@ -163,9 +163,9 @@ class Controller():
 
         self.move(-x_max_offset, motor=0, take_data=False)
         for _ in range(x_npoints-1):
-            self.scan_1D(motor=1, npoints=y_npoints, max_offset=y_max_offset)
+            self.scan_1D(motor=1, npoints=y_npoints, max_offset=y_max_offset, reset=False, save=False)
             self.move(2*x_max_offset/(x_npoints-1), motor=0, take_data=False)
-        self.scan_1D(motor=1, npoints=y_npoints, max_offset=y_max_offset)
+        self.scan_1D(motor=1, npoints=y_npoints, max_offset=y_max_offset, reset=False, save=False)
         self.move(-x_max_offset, motor=0, take_data=False)
 
         timestamp = datetime.today().strftime('%H:%M')
