@@ -13,25 +13,22 @@ import os
 import numpy as np
 import seaborn as sns
 from datetime import datetime
-
+from pymeasure.instruments.lakeshore import LakeShore421
 
 # TO IMPLEMENT:
 # move to axis function
 # Format curpos printing to .2f
     
 class Controller():
-    def __init__(self, ard_port='COM4', gauss_port='COM6',
-                 ard_baudrate=9600, gauss_baudrate=2400,
-                 ard_timeout=15, gauss_timeout=1):
+    def __init__(self, ard_port='COM4',
+                 ard_baudrate=9600,
+                 ard_timeout=15):
         '''Initialize connections to arduino and gaussmeter over serial. 
         Save measurements in DataFrame. '''
-        self.gauss_port = gauss_port
-        self.gauss_baudrate = gauss_baudrate
-        self.gauss_timeout = gauss_timeout
+        self.gauss = LakeShore421('COM5', baud_rate=9600)
+
         self.arduino = serial.Serial(port = ard_port, baudrate=ard_baudrate,
                                      timeout=ard_timeout)
-        self.gauss = serial.Serial(port = gauss_port, baudrate=self.gauss_baudrate,
-                                   timeout=self.gauss_timeout)
 
         # Motor calibrations (arduino steps per mm)
         # Additional info: 1 arduino step is 1/16 of motor step. All motors are 
@@ -59,21 +56,7 @@ class Controller():
         ''' Read from 6010 FWBELL gaussmeter. Return measurement as tuple of
         z_step and field. While loop ensures that measurements is tried until sucessful'''
 
-        try:
-            while True:
-                # print('take measurement') #for troubleshooting
-                self.gauss.write(b':measure:flux?\n')
-                message = self.gauss.read_until()
-                if message:
-                    break
-        except:
-            # Error in writing or reading to gaussmeter. Disconnect and reconnect
-            self.gauss.__exit__()
-            time.sleep(1)
-            self.gauss = serial.Serial(port = self.gauss_port, baudrate=self.gauss_baudrate,
-                                    timeout=self.gauss_timeout)
-        
-        field_reading = message.decode().split('T')[0]
+        field_reading = self.gauss.field
         print(f'Field: {field_reading} T at {[round(x,2) for x in self.curpos]}')
 
         data = [*self.curpos, float(field_reading)]
@@ -219,7 +202,7 @@ class Controller():
     def close(self):
         self.__exit__()
     
-conn = Controller(ard_port='COM4', gauss_port='COM6')
+conn = Controller(ard_port='COM4')
 
 
 # %%
