@@ -25,7 +25,7 @@ class Controller():
                  ard_timeout=15):
         '''Initialize connections to arduino and gaussmeter over serial. 
         Save measurements in DataFrame. '''
-        self.gauss = LakeShore421('COM5', baud_rate=9600)
+        self.gauss = LakeShore421('COM6', baud_rate=9600)
 
         self.arduino = serial.Serial(port = ard_port, baudrate=ard_baudrate,
                                      timeout=ard_timeout)
