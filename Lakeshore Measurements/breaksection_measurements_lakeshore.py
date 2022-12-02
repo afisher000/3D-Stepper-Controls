@@ -71,14 +71,14 @@ class Controller():
         
         slop = 0.5
         max_move = 4
-        if abs(dist)<=5: # Short moves
+        if abs(dist)<=max_move: # Short moves
             if dist>=0:
                 self.raw_move(dist, take_data=take_data, motor=motor)
             else:
                 self.raw_move(dist-slop, take_data=False, motor=motor)
                 self.raw_move(slop, take_data=take_data, motor=motor)
-        elif motor!=2:
-            print('Cannot move motors x,y move than 5mm!')
+        # elif motor!=2:
+            # print('Cannot move motors x,y move than 5mm!')
         else: # Long moves
             if dist>=0:
                 n_moves = np.ceil((dist)/max_move).astype('int')
@@ -111,10 +111,74 @@ class Controller():
         # Update curpos and take measurement
         time.sleep(0.5)
         self.curpos[motor] += steps/self.motor_calibration[motor]
+        self.save_curpos()
         if take_data:
             self.get_measurement()
         return
         
+    def efficient_scan_3D(self, xrange, yrange, zrange, reset=True, save=True):
+        '''Efficiently scans over the 3D grid of points specified by input ranges,
+        taking into account that zmotor is faster than ymotor is faster than xmotor.
+        NOTE: ranges must be specified as relative to the current position, NOT aboslute.'''
+
+        if reset:
+            self.reset_data()
+
+        def convert_to_list(list_of_arrays):
+            output_lists = []
+            for array in list_of_arrays:
+                if isinstance(array, np.ndarray):
+                    output_lists.append(array.tolist())
+                else:
+                    output_lists.append(array)
+            return output_lists
+                
+        xrange, yrange, zrange = convert_to_list([xrange, yrange, zrange])
+        Nx, Ny, Nz = len(xrange), len(yrange), len(zrange)
+        X, Y, Z = np.meshgrid(xrange, yrange, zrange)
+        df = pd.DataFrame(columns=['x','y', 'z','xidx','yidx','zidx','score'])
+        df.x = X.ravel()
+        df.y = Y.ravel()
+        df.z = Z.ravel()
+        df.xidx = df.x.apply(lambda x: xrange.index(x))
+        df.yidx = df.y.apply(lambda y: yrange.index(y))
+        df.zidx = df.z.apply(lambda z: zrange.index(z))
+
+        # Sort by score using indexes to "snake" scanning path
+        df.score = ( 
+            df.xidx*Ny*Nz + 
+            ((df.xidx+1)%2 * df.yidx + (df.xidx%2) * (Ny-1-df.yidx))*Nz + 
+            ((df.yidx+1)%2 * df.zidx + (df.yidx%2) * (Nz-1-df.zidx))
+            )
+        df = df.sort_values(by='score')
+        print(df)
+        df.x += self.curpos[0]
+        df.y += self.curpos[1]
+        df.z += self.curpos[2]
+
+        self.move(df.x.iloc[0]-self.curpos[0], motor=0, take_data=False)
+        self.move(df.y.iloc[0]-self.curpos[1], motor=1, take_data=False)
+        self.move(df.z.iloc[0]-self.curpos[2], motor=2, take_data=False)
+
+        # Make moves
+        for _, row in df.iterrows():
+            eps = 1e-6
+            dx = row.x - self.curpos[0]
+            dy = row.y - self.curpos[1]
+            dz = row.z - self.curpos[2]
+            if abs(dx)>eps:
+                self.move(dx, motor=0)
+            elif abs(dy)>eps:
+                self.move(dy, motor=1)
+            elif abs(dz)>eps:
+                self.move(dz, motor=2)
+            else:
+                self.get_measurement()
+        
+        if save:
+            self.measurements.to_csv('efficiency 3D data.csv', index=False)
+        return
+
     def scan_3D(self, reset=True, save=True,
         x_npoints=5, x_max_offset=0.75, 
         y_npoints=5, y_max_offset=0.75,
@@ -190,13 +254,21 @@ class Controller():
         df.plot.scatter(x=coord, y='field', label='Data', ax=ax)
         df.plot(x=coord, y='linearfit', label=f'Fit: {gradient:.1f} T/m', ax=ax)
     
+    def set_curpos(self, new_curpos):
+        self.curpos = new_curpos
+        self.save_curpos()
+        return
+
+    def save_curpos(self):
+        pickle.dump(self.curpos, open('saved_pos.pkl','wb'))
+        return
+
     def __exit__(self, *args):
         ''' Close connections on exit of with statement. Save curstep to 
         pickle file.'''
         self.arduino.close()
-        self.gauss.close()
         self.measurements.to_csv('temp_data.csv', index=False)
-        pickle.dump(self.curpos, open('saved_pos.pkl','wb'))
+        self.save_curpos()
         return
 
     def close(self):
