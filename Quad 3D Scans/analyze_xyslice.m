@@ -2,17 +2,22 @@ clc;
 close all;
 clearvars;
 
-filename = 'By_q2_3dscan_22-11-09.csv';
+% filename = 'By_q2_3dscan_22-11-09.csv';
+% filename = 'Bx_q1_2dscan_22-11-14.csv';
+filename = 'Bx_q1_3dscan_shuntout_22-11-15.csv';
+z0 = 1.5*0;
 T = readtable(filename);
+T.x = round(T.x, 10);
+T.y = round(T.y, 10);
+T.z = round(T.z, 10);
 xsize = length(unique(T.x));
 ysize = length(unique(T.y));
 zsize = length(unique(T.z));
+slice_mask = (T.z==z0);
 
-slice_mask = (T.z==0);
-
-X = reshape(T.x(slice_mask), 5, 5);
-Y = reshape(T.y(slice_mask), 5, 5);
-F = reshape(T.field(slice_mask), 5, 5);
+X = reshape(T.x(slice_mask), xsize, ysize);
+Y = reshape(T.y(slice_mask), xsize, ysize);
+F = reshape(T.field(slice_mask), xsize, ysize);
 
 %% Define maj/min transverse coords
 if contains(filename, 'Bx')
